@@ -3,72 +3,130 @@ import google.generativeai as genai
 import pypdf
 from backend import Database, MacchinaService, CommessaService
 
-# --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Fabbrica AI", page_icon="🏭", layout="wide")
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(page_title="Fabbrica AI Pro", page_icon="🏭", layout="wide")
 
+# --- CONFIGURAZIONE AI ---
 try:
-    # LEGGE LA CHIAVE DALLA CASSAFORTE
-    API_KEY = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=API_KEY)
+    api_key = st.secrets["GOOGLE_API_KEY"]
+    genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-2.0-flash')
 except:
-    st.error("Mancano le chiavi segrete! Configurale su Streamlit Cloud.")
+    st.error("❌ Manca la chiave API Google in secrets.toml")
     st.stop()
 
-# --- CONNESSIONE DATI ---
+# --- INIZIALIZZAZIONE SERVIZI ---
 if "db" not in st.session_state:
     st.session_state.db = Database()
     st.session_state.macchina_service = MacchinaService(st.session_state.db)
+    st.session_state.commessa_service = CommessaService(st.session_state.db)
 
-# --- SIDEBAR ---
+# ==========================================
+# BARRA LATERALE (ADMIN & PDF)
+# ==========================================
 with st.sidebar:
-    st.header("📚 Documenti")
+    st.title("🔧 Pannello Controllo")
+    
+    # --- SEZIONE 1: MANUALI PDF ---
+    st.subheader("📚 Documentazione (RAG)")
     uploaded_file = st.file_uploader("Carica Manuale PDF", type="pdf")
     testo_manuale = ""
     if uploaded_file:
         try:
             reader = pypdf.PdfReader(uploaded_file)
-            for page in reader.pages: testo_manuale += page.extract_text()
-            st.success("Manuale caricato!")
-        except: st.error("Errore PDF")
+            for page in reader.pages:
+                testo_manuale += page.extract_text() + "\n"
+            st.success(f"Manuale caricato! ({len(reader.pages)} pag.)")
+        except:
+            st.error("Errore lettura PDF")
 
     st.divider()
-    st.header("🛠️ Admin")
-    with st.expander("➕ Aggiungi Macchina"):
-        n = st.text_input("Nome")
-        s = st.selectbox("Stato", ["Attiva", "Ferma", "Errore"])
-        if st.button("Salva"):
-            st.session_state.macchina_service.add_machine(n, s)
+    
+    # --- SEZIONE 2: AMMINISTRAZIONE ---
+    st.subheader("🛠️ Gestione Fabbrica")
+    
+    # A. Aggiungi Macchina
+    with st.expander("➕ Nuova Macchina"):
+        n_macchina = st.text_input("Nome")
+        s_macchina = st.selectbox("Stato", ["Attiva", "Ferma", "Manutenzione", "Errore"])
+        if st.button("Salva Macchina"):
+            st.session_state.macchina_service.add_machine(n_macchina, s_macchina)
+            st.success("Salvata!")
             st.rerun()
 
-    with st.expander("✏️ Aggiorna"):
+    # B. Aggiorna Stato
+    with st.expander("✏️ Aggiorna Stato"):
         nomi = st.session_state.macchina_service.get_machine_names()
         if nomi:
-            m = st.selectbox("Macchina", nomi)
-            d = st.text_area("Stato/Note")
+            m_scelta = st.selectbox("Seleziona Macchina", nomi)
+            nuova_nota = st.text_area("Nuovo Stato / Direttiva")
             if st.button("Aggiorna"):
-                st.session_state.macchina_service.update_machine(m, d)
+                st.session_state.macchina_service.update_machine(m_scelta, nuova_nota)
+                st.success("Aggiornato!")
                 st.rerun()
+                
+    # C. Nuova Commessa
+    with st.expander("📄 Crea Commessa"):
+        cod_c = st.text_input("Codice (es. JOB-101)")
+        prod_c = st.text_input("Prodotto")
+        qta_c = st.number_input("Quantità", min_value=1, value=100)
+        if st.button("Registra Commessa"):
+            st.session_state.commessa_service.add_commessa(cod_c, prod_c, qta_c)
+            st.success("Commessa Inserita!")
+            st.rerun()
 
-# --- CHAT ---
-st.title("🏭 Assistente Fabbrica (Cloud)")
+# ==========================================
+# CHATBOT PRINCIPALE
+# ==========================================
+st.title("🏭 Assistente di Produzione 4.0")
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Sono online dal Cloud."}]
+    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Sono connesso al Cloud. Gestisco macchine, commesse e leggo i manuali."}]
 
+# Mostra storico
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-prompt = st.chat_input("Scrivi qui...")
+# Input utente
+prompt = st.chat_input("Chiedi stato impianto, dettagli commesse o soluzioni ai guasti...")
+
 if prompt:
     st.chat_message("user").write(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # Contesto
-    dati = st.session_state.macchina_service.get_all_machines()
-    full_prompt = f"Dati Impianto:\n{dati}\n\nManuale:\n{testo_manuale}\n\nDomanda: {prompt}"
+    # 1. Recupero dati dal Cloud
+    dati_macchine = st.session_state.macchina_service.get_all_machines()
+    dati_commesse = st.session_state.commessa_service.get_all_commesse()
     
+    # 2. Creazione Prompt Completo
+    full_prompt = f"""
+    Sei l'assistente AI della fabbrica.
+    
+    DATI IMPIANTO (Dal Database Cloud):
+    {dati_macchine}
+    
+    COMMESSE ATTIVE:
+    {dati_commesse}
+    
+    MANUALE TECNICO (Se caricato):
+    {testo_manuale if testo_manuale else "Nessun manuale caricato."}
+    
+    DOMANDA UTENTE: {prompt}
+    
+    Rispondi in modo preciso. Se serve, cita il manuale.
+    """
+    
+    # 3. Generazione Risposta
     with st.chat_message("assistant"):
-        resp = model.generate_content(full_prompt)
-        st.write(resp.text)
-        st.session_state.messages.append({"role": "assistant", "content": resp.text})
+        with st.spinner("Analisi dati in corso..."):
+            try:
+                response = model.generate_content(full_prompt)
+                st.write(response.text)
+                
+                # Token counter
+                usage = response.usage_metadata
+                st.caption(f"📊 Token usati: {usage.total_token_count}")
+                
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+            except Exception as e:
+                st.error(f"Errore AI: {e}")

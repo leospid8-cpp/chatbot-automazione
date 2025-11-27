@@ -5,10 +5,9 @@ import json
 import time
 from backend import Database, MacchinaService, CommessaService
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Agente Fabbrica 5.0", page_icon="🤖", layout="wide")
+# --- CONFIGURAZIONE ---
+st.set_page_config(page_title="Gestionale Fabbrica AI", page_icon="💰", layout="wide")
 
-# --- CONFIGURAZIONE AI ---
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
@@ -17,170 +16,152 @@ except:
     st.error("❌ Manca la chiave API Google nei secrets.")
     st.stop()
 
-# --- INIZIALIZZAZIONE SERVIZI ---
+# --- DATI ---
 if "db" not in st.session_state:
     st.session_state.db = Database()
     st.session_state.macchina_service = MacchinaService(st.session_state.db)
     st.session_state.commessa_service = CommessaService(st.session_state.db)
 
-# ==========================================
-# FUNZIONE SPECIALE: L'ESECUTORE
-# ==========================================
+# --- FUNZIONE AGENTE (Per modifiche via chat) ---
 def esegui_azione_ai(azione_json):
-    """Questa funzione è la 'mano' dell'AI che tocca il database"""
     try:
-        # Tenta di convertire la stringa in dizionario
         dati = json.loads(azione_json)
         comando = dati.get("comando")
         
         if comando == "aggiorna_commessa":
-            codice = dati.get("codice")
-            nuovo_stato = dati.get("stato")
-            # Convertiamo in minuscolo per confronto sicuro, ma salviamo come arriva
-            st.session_state.commessa_service.update_commessa(codice, nuovo_stato)
-            return f"✅ ESEGUITO: Ho aggiornato la commessa {codice} allo stato '{nuovo_stato}'."
-            
-        elif comando == "nuova_commessa":
-            codice = dati.get("codice")
-            prodotto = dati.get("prodotto")
-            quantita = dati.get("quantita")
-            st.session_state.commessa_service.add_commessa(codice, prodotto, quantita)
-            return f"✅ ESEGUITO: Ho creato la commessa {codice} per {quantita}x {prodotto}."
-
+            st.session_state.commessa_service.update_commessa(dati.get("codice"), dati.get("stato"))
+            return f"✅ Commessa {dati.get('codice')} aggiornata a {dati.get('stato')}."
         elif comando == "aggiorna_macchina":
-            nome = dati.get("nome")
-            stato = dati.get("stato")
-            st.session_state.macchina_service.update_machine(nome, stato)
-            return f"✅ ESEGUITO: Macchina {nome} impostata su {stato}."
-
-        return "⚠️ Azione richiesta ma comando non riconosciuto."
-    except json.JSONDecodeError:
-        return "❌ Errore: L'AI ha generato un codice non valido."
+            st.session_state.macchina_service.update_machine(dati.get("nome"), dati.get("stato"))
+            return f"✅ Macchina {dati.get('nome')} aggiornata."
+        # Nota: La creazione commessa via chat la teniamo semplice (senza prezzi) per ora
+        elif comando == "nuova_commessa": 
+            st.session_state.commessa_service.add_commessa(dati.get("codice"), dati.get("prodotto"), dati.get("quantita"), 0, 0, 0)
+            return f"✅ Commessa base {dati.get('codice')} creata (aggiorna i prezzi dal pannello)."
+        
+        return "⚠️ Azione sconosciuta."
     except Exception as e:
-        return f"❌ Errore nell'esecuzione dell'azione: {e}"
+        return f"❌ Errore: {e}"
 
 # ==========================================
-# BARRA LATERALE (Funzioni Manuali)
+# BARRA LATERALE (ADMIN)
 # ==========================================
 with st.sidebar:
-    st.title("🔧 Pannello Controllo")
-    st.info("Ora puoi chiedere le modifiche direttamente in chat!")
+    st.title("🔧 Pannello Gestionale")
     
-    # --- MANUALI PDF ---
-    st.subheader("📚 RAG (Manuali)")
+    # --- PDF ---
+    st.subheader("📚 RAG")
     uploaded_file = st.file_uploader("Carica Manuale PDF", type="pdf")
     testo_manuale = ""
     if uploaded_file:
         try:
             reader = pypdf.PdfReader(uploaded_file)
-            for page in reader.pages:
-                testo_manuale += page.extract_text() + "\n"
-            st.success("Manuale caricato!")
-        except:
-            st.error("Errore PDF")
+            for page in reader.pages: testo_manuale += page.extract_text() + "\n"
+            st.success("PDF Caricato!")
+        except: st.error("Errore PDF")
 
     st.divider()
 
-    # --- COMANDI MANUALI ---
-    with st.expander("➕ Aggiungi Macchina"):
-        n = st.text_input("Nome Macchina")
-        s = st.selectbox("Stato", ["Attiva", "Ferma", "Errore"])
-        if st.button("Salva"):
-            st.session_state.macchina_service.add_machine(n, s)
+    # --- NUOVA COMMESSA CON PREZZI ---
+    with st.expander("💰 Crea Commessa (Finanziaria)"):
+        cod = st.text_input("Codice")
+        prod = st.text_input("Prodotto")
+        qta = st.number_input("Quantità", 1, 10000, 100)
+        
+        st.write("--- Dati Economici ---")
+        c_mat = st.number_input("Costo Materiali Totale (€)", 0.0, step=10.0)
+        c_lav = st.number_input("Costo Lavorazione Totale (€)", 0.0, step=10.0)
+        p_ven = st.number_input("Prezzo Vendita Totale (€)", 0.0, step=50.0)
+        
+        if st.button("Registra Commessa"):
+            st.session_state.commessa_service.add_commessa(cod, prod, qta, c_mat, c_lav, p_ven)
+            st.success("Salvata nel Cloud!")
             st.rerun()
 
+    # --- ALTRI COMANDI ---
+    with st.expander("✏️ Aggiorna Macchina"):
+        nomi = st.session_state.macchina_service.get_machine_names()
+        if nomi:
+            m = st.selectbox("Macchina", nomi)
+            s = st.text_area("Nuovo Stato")
+            if st.button("Aggiorna Stato Macchina"):
+                st.session_state.macchina_service.update_machine(m, s)
+                st.rerun()
+                
+    with st.expander("✅ Aggiorna Commessa"):
+        codici = st.session_state.commessa_service.get_commessa_codes()
+        if codici:
+            c = st.selectbox("Codice", codici)
+            s = st.selectbox("Nuovo Stato", ["Pianificata", "In Lavorazione", "Completata"])
+            if st.button("Aggiorna Stato Commessa"):
+                st.session_state.commessa_service.update_commessa(c, s)
+                st.rerun()
+
 # ==========================================
-# CHATBOT AGENTE
+# CHATBOT ANALISTA
 # ==========================================
-st.title("🤖 Agente di Fabbrica (Legge e Scrive)")
+st.title("📊 Assistente Fabbrica & Finanza")
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Sono pronto. Posso leggere i dati e modificare il database se me lo chiedi."}]
+    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Posso analizzare la produzione e i guadagni. Chiedimi un report mensile o l'analisi dei costi."}]
 
-# Mostra storico
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-# Input utente
-prompt = st.chat_input("Es: 'Imposta la commessa A1 come Completata'")
+prompt = st.chat_input("Es: 'Quanto abbiamo guadagnato questo mese?' o 'Analizza i costi della commessa A1'")
 
 if prompt:
     st.chat_message("user").write(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # 1. Recupero dati aggiornati
+    # Dati
     dati_macchine = st.session_state.macchina_service.get_all_machines()
     dati_commesse = st.session_state.commessa_service.get_all_commesse()
     
-    # 2. Prompt Tecnico
     full_prompt = f"""
-    Sei l'Agente Operativo della fabbrica.
+    Sei un Analista di Produzione e Finanziario.
     
-    DATI ATTUALI:
-    {dati_macchine}
-    ---
+    DATI ECONOMICI E PRODUTTIVI (Dal Database):
     {dati_commesse}
+    
+    STATO MACCHINE:
+    {dati_macchine}
+    
+    MANUALE: {testo_manuale[:1000] if testo_manuale else "Nessuno"}
     
     DOMANDA UTENTE: {prompt}
     
     ISTRUZIONI:
-    1. Se l'utente chiede informazioni, rispondi normalmente.
-    2. Se l'utente vuole MODIFICARE o CREARE, rispondi SOLO con un JSON.
-    
-    FORMATI JSON (Rispetta questi campi esatti):
-    - Aggiorna commessa: {{"comando": "aggiorna_commessa", "codice": "...", "stato": "..."}}
-    - Nuova commessa: {{"comando": "nuova_commessa", "codice": "...", "prodotto": "...", "quantita": 100}}
-    - Aggiorna macchina: {{"comando": "aggiorna_macchina", "nome": "...", "stato": "..."}}
-    
-    IMPORTANTE: Scrivi SOLO il JSON senza commenti, oppure rispondi a parole se non devi fare azioni.
+    1. Se l'utente chiede un REPORT o CALCOLI, usa i dati economici forniti (Spese, Ricavi, Utile) per fare somme e analisi precise.
+    2. Se l'utente vuole MODIFICARE (es. "Metti la commessa X in Completata"), rispondi SOLO col JSON:
+       {{"comando": "aggiorna_commessa", "codice": "...", "stato": "..."}} o 
+       {{"comando": "aggiorna_macchina", "nome": "...", "stato": "..."}}
     """
     
-    # 3. Generazione e Controllo Azione
     with st.chat_message("assistant"):
-        with st.spinner("Elaborazione..."):
+        with st.spinner("Analisi in corso..."):
             try:
                 response = model.generate_content(full_prompt)
-                risposta_ai = response.text.strip()
+                risposta = response.text.strip()
                 
-                # --- CERVELLO ESECUTIVO (Nuova logica robusta) ---
-                json_da_eseguire = None
+                # Riconoscimento JSON (Agente)
+                json_exec = None
+                if "```json" in risposta:
+                    s = risposta.find("```json") + 7
+                    e = risposta.find("```", s)
+                    json_exec = risposta[s:e].strip()
+                elif risposta.startswith("{") and risposta.endswith("}"):
+                    json_exec = risposta
                 
-                # Caso A: JSON dentro blocchi markdown ```json ... ```
-                if "```json" in risposta_ai:
-                    try:
-                        start = risposta_ai.find("```json") + 7
-                        end = risposta_ai.find("```", start)
-                        json_da_eseguire = risposta_ai[start:end].strip()
-                    except:
-                        pass
-                
-                # Caso B: JSON puro o sporco nel testo (cerca le graffe)
-                elif "{" in risposta_ai and "}" in risposta_ai:
-                    start = risposta_ai.find("{")
-                    end = risposta_ai.rfind("}") + 1
-                    json_da_eseguire = risposta_ai[start:end]
-
-                # --- ESECUZIONE ---
-                if json_da_eseguire:
-                    # Proviamo a eseguirlo
-                    esito = esegui_azione_ai(json_da_eseguire)
-                    
-                    if "❌" in esito:
-                        # Se è fallito il parsing, stampiamo l'errore o il testo originale
-                        st.write(risposta_ai)
-                        st.warning(f"Tentativo azione fallito: {esito}")
-                    else:
-                        # Successo!
-                        st.success(esito)
-                        st.session_state.messages.append({"role": "assistant", "content": esito})
-                        
-                        # Ricarica pagina per mostrare i dati nuovi
-                        time.sleep(2)
-                        st.rerun()
+                if json_exec:
+                    esito = esegui_azione_ai(json_exec)
+                    st.success(esito)
+                    st.session_state.messages.append({"role": "assistant", "content": esito})
+                    time.sleep(2)
+                    st.rerun()
                 else:
-                    # Risposta normale (parlata)
-                    st.write(risposta_ai)
-                    st.session_state.messages.append({"role": "assistant", "content": risposta_ai})
-
+                    st.write(risposta)
+                    st.session_state.messages.append({"role": "assistant", "content": risposta})
+                    
             except Exception as e:
-                st.error(f"Errore critico: {e}")
+                st.error(f"Errore: {e}")

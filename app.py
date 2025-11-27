@@ -4,7 +4,7 @@ import pypdf
 from backend import Database, MacchinaService, CommessaService
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Fabbrica AI Pro", page_icon="🏭", layout="wide")
+st.set_page_config(page_title="Fabbrica AI 4.0", page_icon="🏭", layout="wide")
 
 # --- CONFIGURAZIONE AI ---
 try:
@@ -12,7 +12,7 @@ try:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-2.0-flash')
 except:
-    st.error("❌ Manca la chiave API Google in secrets.toml")
+    st.error("❌ Manca la chiave API Google nei secrets.")
     st.stop()
 
 # --- INIZIALIZZAZIONE SERVIZI ---
@@ -45,7 +45,7 @@ with st.sidebar:
     # --- SEZIONE 2: AMMINISTRAZIONE ---
     st.subheader("🛠️ Gestione Fabbrica")
     
-    # A. Aggiungi Macchina
+    # A. NUOVA MACCHINA
     with st.expander("➕ Nuova Macchina"):
         n_macchina = st.text_input("Nome")
         s_macchina = st.selectbox("Stato", ["Attiva", "Ferma", "Manutenzione", "Errore"])
@@ -54,18 +54,20 @@ with st.sidebar:
             st.success("Salvata!")
             st.rerun()
 
-    # B. Aggiorna Stato
-    with st.expander("✏️ Aggiorna Stato"):
+    # B. AGGIORNA STATO MACCHINA
+    with st.expander("✏️ Aggiorna Macchina"):
         nomi = st.session_state.macchina_service.get_machine_names()
         if nomi:
             m_scelta = st.selectbox("Seleziona Macchina", nomi)
             nuova_nota = st.text_area("Nuovo Stato / Direttiva")
-            if st.button("Aggiorna"):
+            if st.button("Aggiorna Macchina"):
                 st.session_state.macchina_service.update_machine(m_scelta, nuova_nota)
                 st.success("Aggiornato!")
                 st.rerun()
-                
-    # C. Nuova Commessa
+        else:
+            st.warning("Nessuna macchina.")
+
+    # C. NUOVA COMMESSA
     with st.expander("📄 Crea Commessa"):
         cod_c = st.text_input("Codice (es. JOB-101)")
         prod_c = st.text_input("Prodotto")
@@ -74,6 +76,20 @@ with st.sidebar:
             st.session_state.commessa_service.add_commessa(cod_c, prod_c, qta_c)
             st.success("Commessa Inserita!")
             st.rerun()
+
+    # D. AGGIORNA STATO COMMESSA (NUOVO!)
+    with st.expander("✅ Aggiorna Commessa"):
+        codici = st.session_state.commessa_service.get_commessa_codes()
+        if codici:
+            c_sel = st.selectbox("Scegli Commessa", codici)
+            s_new = st.selectbox("Nuovo Stato", ["Pianificata", "In Lavorazione", "Completata", "Sospesa"])
+            
+            if st.button("Cambia Stato Commessa"):
+                st.session_state.commessa_service.update_commessa(c_sel, s_new)
+                st.success(f"Stato aggiornato a: {s_new}")
+                st.rerun()
+        else:
+            st.info("Nessuna commessa presente.")
 
 # ==========================================
 # CHATBOT PRINCIPALE

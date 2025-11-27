@@ -1,6 +1,7 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import streamlit as st
+import datetime
 
 class Database:
     def __init__(self):
@@ -18,10 +19,8 @@ class Database:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute(sql, params)
             
-            # Se è una lettura (SELECT) ritorna i dati
             if sql.strip().upper().startswith("SELECT"):
                 return cursor.fetchall()
-            # Se è una scrittura (INSERT/UPDATE) conferma le modifiche
             else:
                 conn.commit()
                 return True
@@ -46,7 +45,7 @@ class MacchinaService:
                 stato TEXT
             );
         """)
-        # Dati di prova se vuota
+        # Dati di prova
         if not self.db.query("SELECT * FROM macchine"):
             self.db.query("INSERT INTO macchine (nome, stato) VALUES (%s, %s)", ('Fresatrice A1', 'Attiva'))
 
@@ -65,41 +64,71 @@ class MacchinaService:
     def update_machine(self, nome_macchina, nuovo_stato):
         self.db.query("UPDATE macchine SET stato = %s WHERE nome = %s", (nuovo_stato, nome_macchina))
 
-# --- GESTIONE COMMESSE (Aggiornata) ---
+# --- GESTIONE COMMESSE (FINANZIARIA) ---
 class CommessaService:
     def __init__(self, db):
         self.db = db
         self.init_table()
 
     def init_table(self):
+        # Crea la tabella con i campi economici e le date
         self.db.query("""
             CREATE TABLE IF NOT EXISTS commesse (
                 id SERIAL PRIMARY KEY,
                 codice TEXT,
                 prodotto TEXT,
                 quantita INTEGER,
-                stato TEXT DEFAULT 'Pianificata'
+                stato TEXT DEFAULT 'Pianificata',
+                costo_materiale DECIMAL(10,2) DEFAULT 0,
+                costo_lavorazione DECIMAL(10,2) DEFAULT 0,
+                prezzo_vendita DECIMAL(10,2) DEFAULT 0,
+                data_creazione DATE DEFAULT CURRENT_DATE,
+                data_chiusura DATE
             );
         """)
 
-    # 1. Crea Nuova
-    def add_commessa(self, codice, prodotto, quantita):
+    # 1. Crea Nuova (Con Prezzi)
+    def add_commessa(self, codice, prodotto, quantita, c_mat, c_lav, p_vend):
         self.db.query(
-            "INSERT INTO commesse (codice, prodotto, quantita) VALUES (%s, %s, %s)", 
-            (codice, prodotto, quantita)
+            """INSERT INTO commesse 
+               (codice, prodotto, quantita, costo_materiale, costo_lavorazione, prezzo_vendita) 
+               VALUES (%s, %s, %s, %s, %s, %s)""", 
+            (codice, prodotto, quantita, c_mat, c_lav, p_vend)
         )
 
-    # 2. Leggi Tutte (Per l'AI)
+    # 2. Leggi Tutte (Formatta i dati per l'AI)
     def get_all_commesse(self):
         data = self.db.query("SELECT * FROM commesse ORDER BY id DESC")
-        if not data: return "Nessuna commessa attiva."
-        return "\n".join([f"- Commessa {c['codice']}: {c['prodotto']} ({c['quantita']} pz) - Stato: {c['stato']}" for c in data])
+        if not data: return "Nessuna commessa registrata."
+        
+        report = []
+        for c in data:
+            # Prepariamo una stringa ricca di dati per l'AI
+            spese = float(c['costo_materiale']) + float(c['costo_lavorazione'])
+            utile = float(c['prezzo_vendita']) - spese
+            
+            dettaglio = (
+                f"- Commessa {c['codice']} ({c['stato']}): {c['quantita']}x {c['prodotto']}. "
+                f"[Finanza: Materiali={c['costo_materiale']}€, Lavorazione={c['costo_lavorazione']}€, "
+                f"Vendita={c['prezzo_vendita']}€ -> UTILE STIMATO: {utile}€]. "
+                f"Data Inserimento: {c['data_creazione']}."
+            )
+            
+            if c['data_chiusura']:
+                dettaglio += f" CHIUSA IL: {c['data_chiusura']}"
+            
+            report.append(dettaglio)
+            
+        return "\n".join(report)
 
-    # 3. Ottieni lista Codici (Per il menu a tendina)
+    # 3. Lista Codici
     def get_commessa_codes(self):
         data = self.db.query("SELECT codice FROM commesse ORDER BY id DESC")
         return [c['codice'] for c in data]
 
-    # 4. Aggiorna Stato (es. Completata)
+    # 4. Aggiorna Stato (Gestisce la data di chiusura)
     def update_commessa(self, codice, nuovo_stato):
-        self.db.query("UPDATE commesse SET stato = %s WHERE codice = %s", (nuovo_stato, codice))
+        if nuovo_stato == "Completata":
+            self.db.query("UPDATE commesse SET stato = %s, data_chiusura = CURRENT_DATE WHERE codice = %s", (nuovo_stato, codice))
+        else:
+            self.db.query("UPDATE commesse SET stato = %s WHERE codice = %s", (nuovo_stato, codice))

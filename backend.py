@@ -4,11 +4,11 @@ import streamlit as st
 
 class Database:
     def __init__(self):
-        # Legge la password dal file secrets.toml (o dai Secrets del Cloud)
+        # Legge la password sicura dai Secrets di Streamlit
         try:
             self.db_url = st.secrets["SUPABASE_URL"]
         except:
-            st.error("❌ Manca il segreto 'SUPABASE_URL'. Configuralo in .streamlit/secrets.toml")
+            st.error("❌ Errore: Manca 'SUPABASE_URL' nei secrets.toml o su Cloud.")
             st.stop()
 
     def query(self, sql, params=()):
@@ -18,9 +18,10 @@ class Database:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute(sql, params)
             
-            # Se è una lettura (SELECT) ritorna i dati, altrimenti conferma (COMMIT)
+            # Se è una lettura (SELECT) ritorna i dati
             if sql.strip().upper().startswith("SELECT"):
                 return cursor.fetchall()
+            # Se è una scrittura (INSERT/UPDATE) conferma le modifiche
             else:
                 conn.commit()
                 return True
@@ -64,7 +65,7 @@ class MacchinaService:
     def update_machine(self, nome_macchina, nuovo_stato):
         self.db.query("UPDATE macchine SET stato = %s WHERE nome = %s", (nuovo_stato, nome_macchina))
 
-# --- GESTIONE COMMESSE ---
+# --- GESTIONE COMMESSE (Aggiornata) ---
 class CommessaService:
     def __init__(self, db):
         self.db = db
@@ -81,13 +82,24 @@ class CommessaService:
             );
         """)
 
+    # 1. Crea Nuova
     def add_commessa(self, codice, prodotto, quantita):
         self.db.query(
             "INSERT INTO commesse (codice, prodotto, quantita) VALUES (%s, %s, %s)", 
             (codice, prodotto, quantita)
         )
 
+    # 2. Leggi Tutte (Per l'AI)
     def get_all_commesse(self):
         data = self.db.query("SELECT * FROM commesse ORDER BY id DESC")
         if not data: return "Nessuna commessa attiva."
-        return "\n".join([f"- Commessa {c['codice']}: {c['prodotto']} ({c['quantita']} pz)" for c in data])
+        return "\n".join([f"- Commessa {c['codice']}: {c['prodotto']} ({c['quantita']} pz) - Stato: {c['stato']}" for c in data])
+
+    # 3. Ottieni lista Codici (Per il menu a tendina)
+    def get_commessa_codes(self):
+        data = self.db.query("SELECT codice FROM commesse ORDER BY id DESC")
+        return [c['codice'] for c in data]
+
+    # 4. Aggiorna Stato (es. Completata)
+    def update_commessa(self, codice, nuovo_stato):
+        self.db.query("UPDATE commesse SET stato = %s WHERE codice = %s", (nuovo_stato, codice))

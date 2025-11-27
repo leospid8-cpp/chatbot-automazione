@@ -1,15 +1,17 @@
 import streamlit as st
 import google.generativeai as genai
 import pypdf
+import json
 from backend import Database, MacchinaService, CommessaService
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Fabbrica AI 4.0", page_icon="🏭", layout="wide")
+st.set_page_config(page_title="Agente Fabbrica 5.0", page_icon="🤖", layout="wide")
 
 # --- CONFIGURAZIONE AI ---
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
+    # Usiamo un modello che supporta bene il JSON
     model = genai.GenerativeModel('models/gemini-2.0-flash')
 except:
     st.error("❌ Manca la chiave API Google nei secrets.")
@@ -22,13 +24,47 @@ if "db" not in st.session_state:
     st.session_state.commessa_service = CommessaService(st.session_state.db)
 
 # ==========================================
-# BARRA LATERALE (ADMIN & PDF)
+# FUNZIONE SPECIALE: L'ESECUTORE
+# ==========================================
+def esegui_azione_ai(azione_json):
+    """Questa funzione è la 'mano' dell'AI che tocca il database"""
+    try:
+        dati = json.loads(azione_json)
+        comando = dati.get("comando")
+        
+        if comando == "aggiorna_commessa":
+            codice = dati.get("codice")
+            nuovo_stato = dati.get("stato")
+            # Chiama la funzione vera del database
+            st.session_state.commessa_service.update_commessa(codice, nuovo_stato)
+            return f"✅ ESEGUITO: Ho aggiornato la commessa {codice} allo stato '{nuovo_stato}'."
+            
+        elif comando == "nuova_commessa":
+            codice = dati.get("codice")
+            prodotto = dati.get("prodotto")
+            quantita = dati.get("quantita")
+            st.session_state.commessa_service.add_commessa(codice, prodotto, quantita)
+            return f"✅ ESEGUITO: Ho creato la commessa {codice} per {quantita}x {prodotto}."
+
+        elif comando == "aggiorna_macchina":
+            nome = dati.get("nome")
+            stato = dati.get("stato")
+            st.session_state.macchina_service.update_machine(nome, stato)
+            return f"✅ ESEGUITO: Macchina {nome} impostata su {stato}."
+
+        return "⚠️ Azione non riconosciuta."
+    except Exception as e:
+        return f"❌ Errore nell'esecuzione dell'azione: {e}"
+
+# ==========================================
+# BARRA LATERALE (Rimane uguale per le funzioni manuali)
 # ==========================================
 with st.sidebar:
     st.title("🔧 Pannello Controllo")
+    st.info("Ora puoi anche chiedere in chat di modificare le cose!")
     
-    # --- SEZIONE 1: MANUALI PDF ---
-    st.subheader("📚 Documentazione (RAG)")
+    # --- MANUALI PDF ---
+    st.subheader("📚 RAG (Manuali)")
     uploaded_file = st.file_uploader("Carica Manuale PDF", type="pdf")
     testo_manuale = ""
     if uploaded_file:
@@ -36,113 +72,79 @@ with st.sidebar:
             reader = pypdf.PdfReader(uploaded_file)
             for page in reader.pages:
                 testo_manuale += page.extract_text() + "\n"
-            st.success(f"Manuale caricato! ({len(reader.pages)} pag.)")
+            st.success("Manuale caricato!")
         except:
-            st.error("Errore lettura PDF")
-
-    st.divider()
-    
-    # --- SEZIONE 2: AMMINISTRAZIONE ---
-    st.subheader("🛠️ Gestione Fabbrica")
-    
-    # A. NUOVA MACCHINA
-    with st.expander("➕ Nuova Macchina"):
-        n_macchina = st.text_input("Nome")
-        s_macchina = st.selectbox("Stato", ["Attiva", "Ferma", "Manutenzione", "Errore"])
-        if st.button("Salva Macchina"):
-            st.session_state.macchina_service.add_machine(n_macchina, s_macchina)
-            st.success("Salvata!")
-            st.rerun()
-
-    # B. AGGIORNA STATO MACCHINA
-    with st.expander("✏️ Aggiorna Macchina"):
-        nomi = st.session_state.macchina_service.get_machine_names()
-        if nomi:
-            m_scelta = st.selectbox("Seleziona Macchina", nomi)
-            nuova_nota = st.text_area("Nuovo Stato / Direttiva")
-            if st.button("Aggiorna Macchina"):
-                st.session_state.macchina_service.update_machine(m_scelta, nuova_nota)
-                st.success("Aggiornato!")
-                st.rerun()
-        else:
-            st.warning("Nessuna macchina.")
-
-    # C. NUOVA COMMESSA
-    with st.expander("📄 Crea Commessa"):
-        cod_c = st.text_input("Codice (es. JOB-101)")
-        prod_c = st.text_input("Prodotto")
-        qta_c = st.number_input("Quantità", min_value=1, value=100)
-        if st.button("Registra Commessa"):
-            st.session_state.commessa_service.add_commessa(cod_c, prod_c, qta_c)
-            st.success("Commessa Inserita!")
-            st.rerun()
-
-    # D. AGGIORNA STATO COMMESSA (NUOVO!)
-    with st.expander("✅ Aggiorna Commessa"):
-        codici = st.session_state.commessa_service.get_commessa_codes()
-        if codici:
-            c_sel = st.selectbox("Scegli Commessa", codici)
-            s_new = st.selectbox("Nuovo Stato", ["Pianificata", "In Lavorazione", "Completata", "Sospesa"])
-            
-            if st.button("Cambia Stato Commessa"):
-                st.session_state.commessa_service.update_commessa(c_sel, s_new)
-                st.success(f"Stato aggiornato a: {s_new}")
-                st.rerun()
-        else:
-            st.info("Nessuna commessa presente.")
+            st.error("Errore PDF")
 
 # ==========================================
-# CHATBOT PRINCIPALE
+# CHATBOT AGENTE
 # ==========================================
-st.title("🏭 Assistente di Produzione 4.0")
+st.title("🤖 Agente di Fabbrica (Legge e Scrive)")
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Sono connesso al Cloud. Gestisco macchine, commesse e leggo i manuali."}]
+    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Sono un Agente AI. Posso leggere il database e, se me lo chiedi, posso anche modificare commesse e stati macchina."}]
 
 # Mostra storico
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # Input utente
-prompt = st.chat_input("Chiedi stato impianto, dettagli commesse o soluzioni ai guasti...")
+prompt = st.chat_input("Es: 'Imposta la commessa JOB-101 come Completata' o 'La Fresatrice è in Errore'")
 
 if prompt:
     st.chat_message("user").write(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # 1. Recupero dati dal Cloud
+    # 1. Recupero dati
     dati_macchine = st.session_state.macchina_service.get_all_machines()
     dati_commesse = st.session_state.commessa_service.get_all_commesse()
     
-    # 2. Creazione Prompt Completo
+    # 2. Prompt Tecnico (Qui spieghiamo all'AI come "premere i bottoni")
     full_prompt = f"""
-    Sei l'assistente AI della fabbrica.
+    Sei l'Agente Operativo della fabbrica.
     
-    DATI IMPIANTO (Dal Database Cloud):
+    DATI ATTUALI:
     {dati_macchine}
-    
-    COMMESSE ATTIVE:
+    ---
     {dati_commesse}
-    
-    MANUALE TECNICO (Se caricato):
-    {testo_manuale if testo_manuale else "Nessun manuale caricato."}
     
     DOMANDA UTENTE: {prompt}
     
-    Rispondi in modo preciso. Se serve, cita il manuale.
+    ISTRUZIONI PER L'INTELLIGENZA ARTIFICIALE:
+    1. Se l'utente chiede solo informazioni, rispondi normalmente.
+    2. Se l'utente chiede di MODIFICARE o CREARE qualcosa, NON rispondere a parole.
+       Invece, restituisci SOLO un oggetto JSON con il comando da eseguire.
+    
+    FORMATI JSON ACCETTATI PER LE AZIONI:
+    - Per aggiornare commessa: {{"comando": "aggiorna_commessa", "codice": "...", "stato": "..."}}
+    - Per nuova commessa: {{"comando": "nuova_commessa", "codice": "...", "prodotto": "...", "quantita": 100}}
+    - Per aggiornare macchina: {{"comando": "aggiorna_macchina", "nome": "...", "stato": "..."}}
+    
+    IMPORTANTE: Se generi JSON, non scrivere altro testo prima o dopo.
     """
     
-    # 3. Generazione Risposta
+    # 3. Generazione e Controllo Azione
     with st.chat_message("assistant"):
-        with st.spinner("Analisi dati in corso..."):
+        with st.spinner("Elaborazione..."):
             try:
                 response = model.generate_content(full_prompt)
-                st.write(response.text)
+                risposta_ai = response.text.strip()
                 
-                # Token counter
-                usage = response.usage_metadata
-                st.caption(f"📊 Token usati: {usage.total_token_count}")
-                
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                # VERIFICA: L'AI vuole fare un'azione? (Cerca parentesi graffe)
+                if risposta_ai.startswith("{") and risposta_ai.endswith("}"):
+                    # È UN COMANDO JSON! Eseguiamolo.
+                    esito = esegui_azione_ai(risposta_ai)
+                    st.success(esito) # Mostra box verde
+                    st.session_state.messages.append({"role": "assistant", "content": esito})
+                    
+                    # Ricarichiamo la pagina dopo un attimo per aggiornare i dati a video
+                    import time
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    # È UNA RISPOSTA NORMALE
+                    st.write(risposta_ai)
+                    st.session_state.messages.append({"role": "assistant", "content": risposta_ai})
+
             except Exception as e:
                 st.error(f"Errore AI: {e}")
